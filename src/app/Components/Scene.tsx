@@ -9,6 +9,9 @@ export default function Scene({ getIsStill }: { getIsStill: () => boolean }) {
   useEffect(() => {
     if (!mountRef.current) return;
 
+    // Capture the ref in a local var so cleanup uses the same node
+    const mountNode = mountRef.current;
+
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#000000");
 
@@ -17,13 +20,11 @@ export default function Scene({ getIsStill }: { getIsStill: () => boolean }) {
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    mountNode.appendChild(renderer.domElement);
 
-    mountRef.current.appendChild(renderer.domElement);
-
-    // Resize
     const resize = () => {
-      if (!mountRef.current) return;
-      const { clientWidth: w, clientHeight: h } = mountRef.current;
+      const w = mountNode.clientWidth || window.innerWidth;
+      const h = mountNode.clientHeight || window.innerHeight;
       renderer.setSize(w, h, false);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
@@ -38,19 +39,18 @@ export default function Scene({ getIsStill }: { getIsStill: () => boolean }) {
     dir.position.set(3, 4, 2);
     scene.add(dir);
 
-    // Floor-ish gradient
-    const grad = new THREE.Mesh(
-      new THREE.PlaneGeometry(20, 20, 1, 1),
-      new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 1, metalness: 0 })
-    );
-    grad.rotation.x = -Math.PI / 2;
-    grad.position.y = -1;
-    scene.add(grad);
+    // Ground
+    const groundGeom = new THREE.PlaneGeometry(20, 20);
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 1, metalness: 0 });
+    const ground = new THREE.Mesh(groundGeom, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -1;
+    scene.add(ground);
 
-    // Bottle profile (units in ~meters). A quick approximation.
+    // Bottle
     const points: THREE.Vector2[] = [];
-    const profile = [
-      [0.00, -0.9],
+    const profile: Array<[number, number]> = [
+      [0.0, -0.9],
       [0.25, -0.9],
       [0.32, -0.8],
       [0.36, -0.6],
@@ -58,61 +58,64 @@ export default function Scene({ getIsStill }: { getIsStill: () => boolean }) {
       [0.36,  0.2],
       [0.30,  0.35],
       [0.20,  0.55],
-      [0.16,  0.75], // neck
+      [0.16,  0.75],
       [0.16,  0.95],
       [0.14,  1.05],
-      [0.14,  1.25], // mouth
+      [0.14,  1.25],
       [0.20,  1.25],
     ];
     for (const [x, y] of profile) points.push(new THREE.Vector2(x, y));
 
-    const geom = new THREE.LatheGeometry(points, 96);
-    const mat = new THREE.MeshPhysicalMaterial({
+    const bottleGeom = new THREE.LatheGeometry(points, 96);
+    const bottleMat = new THREE.MeshPhysicalMaterial({
       color: 0x73c1ff,
       roughness: 0.2,
       metalness: 0.0,
-      transmission: 0.88,     // glassy
+      transmission: 0.88,
       thickness: 0.25,
       ior: 1.45,
       envMapIntensity: 1.0,
     });
-    const bottle = new THREE.Mesh(geom, mat);
-    bottle.position.y = 0.0;
+    const bottle = new THREE.Mesh(bottleGeom, bottleMat);
     scene.add(bottle);
 
-    // A faint “label” stripe to give the rotation some visual cue
-    const label = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.33, 0.33, 0.25, 64, 1, true),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, transparent: true, opacity: 0.12 })
-    );
+    const labelGeom = new THREE.CylinderGeometry(0.33, 0.33, 0.25, 64, 1, true);
+    const labelMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, transparent: true, opacity: 0.12 });
+    const label = new THREE.Mesh(labelGeom, labelMat);
     label.position.y = 0.05;
     label.rotation.y = Math.PI * 0.17;
     scene.add(label);
 
-    let raf = 0;
+    let raf: number | null = null;
     const clock = new THREE.Clock();
 
     const animate = () => {
       raf = requestAnimationFrame(animate);
       const t = clock.getElapsedTime();
-
-      // Gentle bob + rotation only when still
       if (getIsStill()) {
         bottle.rotation.y += 0.005;
         bottle.position.y = Math.sin(t * 1.0) * 0.03;
       }
-
       renderer.render(scene, camera);
     };
     animate();
 
     return () => {
-      cancelAnimationFrame(raf);
+      if (raf !== null) cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
+
+      // Dispose in reverse-ish order
+      labelGeom.dispose();
+      labelMat.dispose();
+      bottleGeom.dispose();
+      bottleMat.dispose();
+      groundGeom.dispose();
+      groundMat.dispose();
       renderer.dispose();
-      geom.dispose();
-      (mat as any).dispose?.();
-      mountRef.current?.removeChild(renderer.domElement);
+
+      if (mountNode.contains(renderer.domElement)) {
+        mountNode.removeChild(renderer.domElement);
+      }
     };
   }, [getIsStill]);
 
